@@ -112,7 +112,6 @@ def find_config_type(obj):
     default = None
     if issubclass(obj, Registrable):
         method_resolution_order = inspect.getmro(obj)
-        # print(method_resolution_order)
         for base_class in method_resolution_order:
             if issubclass(base_class, Registrable) and base_class is not Registrable:
                 try:
@@ -269,7 +268,6 @@ class Autosummarydhsegment(Autosummary):
                 append_row(col1, col3, col2)
             else:
                 append_row(col1, col2)
-        print(table)
         return [table_spec, table]
 
 
