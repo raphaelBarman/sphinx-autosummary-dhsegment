@@ -298,7 +298,7 @@ class Autosummarydhsegment(Autosummary):
         group.append(nodes.colspec("", colwidth=90))
 
         head = nodes.thead("")
-        cols = ["Class name", "type", "Summary"]
+        cols = ["Class/method name", "type", "Summary"]
         if not has_config_type:
             del cols[1]
         row = nodes.row("")
