@@ -1,5 +1,6 @@
-__version__ = '1.0'
+__version__ = "1.0"
 
+import functools
 import importlib.util
 import inspect
 import pkgutil
@@ -15,8 +16,13 @@ from docutils.statemachine import StringList
 from sphinx import addnodes
 from sphinx.ext.autodoc.directive import DocumenterBridge, Options
 from sphinx.ext.autodoc.importer import import_module
-from sphinx.ext.autosummary import autosummary_table, get_import_prefixes_from_env, Autosummary, import_by_name, \
-    autosummary_toc
+from sphinx.ext.autosummary import (
+    autosummary_table,
+    get_import_prefixes_from_env,
+    Autosummary,
+    import_by_name,
+    autosummary_toc,
+)
 from sphinx.locale import __
 from sphinx.util import logging, rst
 from sphinx.util.docutils import switch_source_input
@@ -49,7 +55,7 @@ def get_package_modules(pkgname):
 
     names = []
     for importer, modname, ispkg in pkgutil.iter_modules(path):
-        fullname = pkgname + '.' + modname
+        fullname = pkgname + "." + modname
         if fullname in ignore_modules:
             continue
 
@@ -69,8 +75,9 @@ def find_autosummary_in_lines(lines, module=None, filename=None):
     """Overrides the autosummary version of this function to dynamically expand
     an autosummarydhsegment directive into a regular autosummary directive."""
 
-    autosummarydhsegment_re = \
-        re.compile(r'^(\s*)\.\.\s+autosummarydhsegment::\s*([A-Za-z0-9_.]+)\s*$')
+    autosummarydhsegment_re = re.compile(
+        r"^(\s*)\.\.\s+autosummarydhsegment::\s*([A-Za-z0-9_.]+)\s*$"
+    )
 
     lines = list(lines)
     new_lines = []
@@ -82,7 +89,7 @@ def find_autosummary_in_lines(lines, module=None, filename=None):
             base_indent = m.group(1)
             name = m.group(2).strip()
 
-            new_lines.append(base_indent + '.. autosummary::')
+            new_lines.append(base_indent + ".. autosummary::")
 
             # Pass on any options.
             while lines:
@@ -107,7 +114,61 @@ def find_autosummary_in_lines(lines, module=None, filename=None):
     return orig_find_autosummary_in_lines(new_lines, module, filename)
 
 
-def find_config_type(obj):
+def get_class_that_defined_method(meth):
+    """
+    Utils method to find the class defining a method.
+
+    Copied from: https://stackoverflow.com/questions/3589311/get-defining-class-of-unbound-method-object-in-python-3/25959545#25959545
+    """
+    if isinstance(meth, functools.partial):
+        return get_class_that_defined_method(meth.func)
+    if inspect.ismethod(meth) or (
+        inspect.isbuiltin(meth)
+        and getattr(meth, "__self__", None) is not None
+        and getattr(meth.__self__, "__class__", None)
+    ):
+        for cls in inspect.getmro(meth.__self__.__class__):
+            if meth.__name__ in cls.__dict__:
+                return cls
+        meth = getattr(meth, "__func__", meth)  # fallback to __qualname__ parsing
+    if inspect.isfunction(meth):
+        cls = getattr(
+            inspect.getmodule(meth),
+            meth.__qualname__.split(".<locals>", 1)[0].rsplit(".", 1)[0],
+            None,
+        )
+        if isinstance(cls, type):
+            return cls
+    return getattr(meth, "__objclass__", None)  # handle special descriptor objects
+
+
+def find_method_config_type(method):
+    type_ = None
+    default = None
+
+    obj = get_class_that_defined_method(method)
+    if obj:
+
+        if issubclass(obj, Registrable):
+            method_resolution_order = inspect.getmro(obj)
+            for base_class in method_resolution_order:
+                if (
+                    issubclass(base_class, Registrable)
+                    and base_class is not Registrable
+                ):
+                    try:
+                        default = base_class.default_implementation
+                        for type_candidate in base_class.get_available():
+                            _, method_candidate = base_class.get(type_candidate)
+                            if method == method_candidate:
+                                type_ = type_candidate
+                                break
+                    except KeyError:
+                        pass
+    return type_, default
+
+
+def find_class_config_type(obj):
     type_ = None
     default = None
     if issubclass(obj, Registrable):
@@ -119,8 +180,17 @@ def find_config_type(obj):
                     default = base_class.default_implementation
                 except KeyError:
                     pass
+    return type_, default
+
+
+def find_config_type(item):
+    if inspect.isclass(item):
+        type_, default = find_class_config_type(item)
+    else:
+        type_, default = find_method_config_type(item)
+
     if type_:
-        if type_ == 'default':
+        if type_ == "default":
             return None
         if type_ == default:
             type_ = f"**{type_}**"
@@ -128,23 +198,28 @@ def find_config_type(obj):
             type_ = f"*{type_}*"
     return type_
 
+
 class Autosummarydhsegment(Autosummary):
     """Extends Autosummary to add a column with config name if it exists
     It takes a single argument, the name of the package."""
 
     def run(self) -> List[Node]:
-        self.bridge = DocumenterBridge(self.env, self.state.document.reporter,
-                                       Options(), self.lineno, self.state)
+        self.bridge = DocumenterBridge(
+            self.env, self.state.document.reporter, Options(), self.lineno, self.state
+        )
 
-        names = [x.strip().split()[0] for x in self.content
-                 if x.strip() and re.search(r'^[~a-zA-Z_]', x.strip()[0])]
+        names = [
+            x.strip().split()[0]
+            for x in self.content
+            if x.strip() and re.search(r"^[~a-zA-Z_]", x.strip()[0])
+        ]
         items = self.get_items(names)
         nodes = self.get_table(items)
 
-        if 'toctree' in self.options:
+        if "toctree" in self.options:
             dirname = posixpath.dirname(self.env.docname)
 
-            tree_prefix = self.options['toctree'].strip()
+            tree_prefix = self.options["toctree"].strip()
             docnames = []
             excluded = Matcher(self.config.exclude_patterns)
             filename_map = self.config.autosummary_filename_map
@@ -154,10 +229,14 @@ class Autosummarydhsegment(Autosummary):
                 docname = posixpath.normpath(posixpath.join(dirname, docname))
                 if docname not in self.env.found_docs:
                     if excluded(self.env.doc2path(docname, None)):
-                        msg = __('autosummary references excluded document %r. Ignored.')
+                        msg = __(
+                            "autosummary references excluded document %r. Ignored."
+                        )
                     else:
-                        msg = __('autosummary: stub file not found %r. '
-                                 'Check your autosummary_generate setting.')
+                        msg = __(
+                            "autosummary: stub file not found %r. "
+                            "Check your autosummary_generate setting."
+                        )
 
                     logger.warning(msg, real_name, location=self.get_source_info())
                     continue
@@ -166,25 +245,28 @@ class Autosummarydhsegment(Autosummary):
 
             if docnames:
                 tocnode = addnodes.toctree()
-                tocnode['includefiles'] = docnames
-                tocnode['entries'] = [(None, docn) for docn in docnames]
-                tocnode['maxdepth'] = -1
-                tocnode['glob'] = None
-                tocnode['caption'] = self.options.get('caption')
+                tocnode["includefiles"] = docnames
+                tocnode["entries"] = [(None, docn) for docn in docnames]
+                tocnode["maxdepth"] = -1
+                tocnode["glob"] = None
+                tocnode["caption"] = self.options.get("caption")
 
-                nodes.append(autosummary_toc('', '', tocnode))
-        if 'toctree' not in self.options and 'caption' in self.options:
-            logger.warning(__('A captioned autosummary requires :toctree: option. ignored.'),
-                           location=nodes[-1])
+                nodes.append(autosummary_toc("", "", tocnode))
+        if "toctree" not in self.options and "caption" in self.options:
+            logger.warning(
+                __("A captioned autosummary requires :toctree: option. ignored."),
+                location=nodes[-1],
+            )
 
         return nodes
+
     def get_items(self, names: List[str]) -> List[Tuple[str, str, str, str, str]]:
         prefixes = get_import_prefixes_from_env(self.env)
 
         items = super().get_items(names)
         new_items = []
         for name, item in zip(names, items):
-            if name.startswith('~'):
+            if name.startswith("~"):
                 name = name[1:]
             real_name, obj, parent, modname = import_by_name(name, prefixes=prefixes)
             config_type = find_config_type(obj)
@@ -203,28 +285,28 @@ class Autosummarydhsegment(Autosummary):
             n_cols = 2
 
         table_spec = addnodes.tabular_col_spec()
-        table_spec['spec'] = r'\X{1}{2}\X{1}{2}'
+        table_spec["spec"] = r"\X{1}{2}\X{1}{2}"
 
-        table = autosummary_table('')
-        real_table = nodes.table('', classes=['longtable'])
+        table = autosummary_table("")
+        real_table = nodes.table("", classes=["longtable"])
         table.append(real_table)
-        group = nodes.tgroup('', cols=n_cols)
+        group = nodes.tgroup("", cols=n_cols)
         real_table.append(group)
-        group.append(nodes.colspec('', colwidth=10))
+        group.append(nodes.colspec("", colwidth=10))
         if has_config_type:
-            group.append(nodes.colspec('', colwidth=10))
-        group.append(nodes.colspec('', colwidth=90))
+            group.append(nodes.colspec("", colwidth=10))
+        group.append(nodes.colspec("", colwidth=90))
 
-        head = nodes.thead('')
+        head = nodes.thead("")
         cols = ["Class name", "type", "Summary"]
         if not has_config_type:
             del cols[1]
-        row = nodes.row('')
+        row = nodes.row("")
         source, line = self.state_machine.get_source_and_line()
         for text in cols:
-            node = nodes.paragraph('')
+            node = nodes.paragraph("")
             vl = StringList()
-            vl.append(text, '%s:%d:<autosummary>' % (source, line))
+            vl.append(text, "%s:%d:<autosummary>" % (source, line))
             with switch_source_input(self.state, vl):
                 self.state.nested_parse(vl, 0, node)
                 try:
@@ -232,20 +314,20 @@ class Autosummarydhsegment(Autosummary):
                         node = node[0]
                 except IndexError:
                     pass
-                row.append(nodes.entry('', node))
+                row.append(nodes.entry("", node))
         head.append(row)
         group.append(head)
 
-        body = nodes.tbody('')
+        body = nodes.tbody("")
         group.append(body)
 
         def append_row(*column_texts: str) -> None:
-            row = nodes.row('')
+            row = nodes.row("")
             source, line = self.state_machine.get_source_and_line()
             for text in column_texts:
-                node = nodes.paragraph('')
+                node = nodes.paragraph("")
                 vl = StringList()
-                vl.append(text, '%s:%d:<autosummary>' % (source, line))
+                vl.append(text, "%s:%d:<autosummary>" % (source, line))
                 with switch_source_input(self.state, vl):
                     self.state.nested_parse(vl, 0, node)
                     try:
@@ -253,15 +335,20 @@ class Autosummarydhsegment(Autosummary):
                             node = node[0]
                     except IndexError:
                         pass
-                    row.append(nodes.entry('', node))
+                    row.append(nodes.entry("", node))
             body.append(row)
 
         for name, sig, summary, real_name, config_type in items:
-            qualifier = 'obj'
-            if 'nosignatures' not in self.options:
-                col1 = ':%s:`%s <%s>`\\ %s' % (qualifier, name, real_name, rst.escape(sig))
+            qualifier = "obj"
+            if "nosignatures" not in self.options:
+                col1 = ":%s:`%s <%s>`\\ %s" % (
+                    qualifier,
+                    name,
+                    real_name,
+                    rst.escape(sig),
+                )
             else:
-                col1 = ':%s:`%s <%s>`' % (qualifier, name, real_name)
+                col1 = ":%s:`%s <%s>`" % (qualifier, name, real_name)
             col2 = summary
             if has_config_type:
                 col3 = config_type if config_type else ""
@@ -269,10 +356,6 @@ class Autosummarydhsegment(Autosummary):
             else:
                 append_row(col1, col2)
         return [table_spec, table]
-
-
-
-
 
 
 def on_config_inited(app, config):
@@ -283,15 +366,13 @@ def on_config_inited(app, config):
 def setup(app):
     generate.find_autosummary_in_lines = find_autosummary_in_lines
 
+    app.add_directive("autosummarydhsegment", Autosummarydhsegment)
+    app.connect("config-inited", on_config_inited)
 
-    app.add_directive('autosummarydhsegment', Autosummarydhsegment)
-    app.connect('config-inited', on_config_inited)
-
-    app.add_config_value('autosummary_filename_map', {}, 'html')
-
+    app.add_config_value("autosummary_filename_map", {}, "html")
 
     return {
-        'version': __version__,
-        'parallel_read_safe': True,
-        'parallel_write_safe': True,
+        "version": __version__,
+        "parallel_read_safe": True,
+        "parallel_write_safe": True,
     }

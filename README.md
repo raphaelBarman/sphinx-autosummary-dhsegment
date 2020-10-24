@@ -10,7 +10,7 @@ Usage
 
 1. Install the module using pip.
 ```
-pip install sphinx-autosummary-dhsegment
+pip install git+https://github.com/raphaelBarman/sphinx-autosummary-dhsegment.git@master
 ```
 2. Enable it in `conf.py`.
 ```python
